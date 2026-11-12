@@ -1,0 +1,112 @@
+library(dplyr)
+library(tidyverse)
+
+#listings.csv is a file extracted from the listings.csv.gz compressed folder
+listings <- read_csv("listings.csv")
+
+names(listings)
+
+
+listings_clean<- select(listings,neighbourhood_cleansed,property_type,price, estimated_occupancy_l365d,estimated_revenue_l365d,review_scores_rating)
+
+
+#Removing rows with missing values in essential columns 
+
+listings_clean <- listings_clean |>
+  mutate(price = readr::parse_number(price))|>
+  drop_na(neighbourhood_cleansed,
+          property_type,
+          price, 
+          estimated_occupancy_l365d,
+          estimated_revenue_l365d)
+
+#Analysying revenue and occupancy by type of property
+property_analysis <- listings_clean |>
+  group_by(property_type)|>
+  summarise(avg_revenue= mean(estimated_revenue_l365d,na.rm=TRUE),
+            median_revenue= median(estimated_revenue_l365d, na.rm=TRUE),
+            avg_ocuppancy= mean(estimated_occupancy_l365d, na.rm=TRUE),
+            avg_price_per_night = mean(price, na.rm = TRUE),
+            total_listings= n(),
+  )|>
+  arrange(desc(avg_revenue))
+
+print(property_analysis, n=100)
+
+#Analysing revenue and occupancy by neighbourhood   
+neighbourhood_analysis <- listings_clean |>
+  group_by(neighbourhood_cleansed)|>
+  summarise(avg_revenue= mean(estimated_revenue_l365d,na.rm=TRUE),
+            median_revenue= median(estimated_revenue_l365d, na.rm=TRUE),
+            avg_ocuppancy= mean(estimated_occupancy_l365d, na.rm=TRUE),
+            total_listings= n(),
+            avg_price_per_night = mean(price, na.rm = TRUE))|>
+  arrange(desc(avg_revenue))
+
+print(neighbourhood_analysis, n=Inf)
+
+#Analyzing average revenue by neighborhood and property type
+combined_analysis <- listings_clean |>
+  group_by(neighbourhood_cleansed, property_type) |>
+  summarise(
+    avg_revenue = mean(estimated_revenue_l365d),
+    median_revenue = median(estimated_revenue_l365d),
+    avg_occupancy = mean(estimated_occupancy_l365d),
+    total_listings = n(),
+    avg_price_per_night = mean(price, na.rm = TRUE),
+    .groups = "drop") |>
+  arrange(desc(avg_revenue))
+print(combined_analysis, n=Inf)
+
+
+#Filtering results to find combinations of neighborhood-property type with more listings and higher revenue
+filtered_analysis <- combined_analysis|>
+  filter(total_listings>=20)|>
+  arrange(desc(avg_revenue))|>
+  print(filtered_analysis, n=Inf)
+
+#Filtering results to find combinations of neighborhood-property type with more listings and higher occupancy 
+combined_occupancy <- combined_analysis |>
+  filter(total_listings >= 20) |>
+  arrange(desc(avg_occupancy))
+print(combined_occupancy, n = Inf)
+
+library(ggplot2)
+
+#Graph showing top 10 Neighbourhood and Property Type Combinations with the highest average annual revenue
+
+graph1_data <- combined_analysis|>
+  filter(total_listings>=20)|>
+  arrange(desc(avg_revenue))|>
+  slice_head(n = 10)
+
+ggplot(graph1_data, aes(x= reorder(paste(neighbourhood_cleansed, property_type, sep="-"), avg_revenue),
+                        y=avg_revenue))+
+  geom_col(fill="darkblue")+
+  scale_y_continuous(labels = scales::label_dollar()) +
+  coord_flip()+
+  labs(title="Top 10 Neighbourhood and Property Type Combinations" ,
+       subtitle= "Average estimated annual revenue (CAD), minimum 20 listing",
+       x= "Neighbourhood and Property type",
+       y= "Average Annual Revenue (CAD)")
+
+
+graph2_data <- combined_analysis |>
+  filter(total_listings >= 20) |>
+  mutate(label = paste(neighbourhood_cleansed, property_type, sep = " - "))
+
+ggplot(graph2_data,
+       aes(x = avg_occupancy,
+           y = avg_revenue,
+           size = total_listings)) +
+  geom_point(alpha = 0.7, color = "darkblue") +
+  geom_text(aes(label = label),
+            size = 3,
+            hjust = -0.1,
+            check_overlap = TRUE) +
+  labs(
+    title = "Relationship Between Occupancy and Annual Revenue",
+    subtitle = "Each point represents a neighbourhood and property type combination",
+    x = "Average Occupancy (Days per Year)",
+    y = "Average Annual Revenue (CAD)",
+    size = "Number of Listings"
