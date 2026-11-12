@@ -13,6 +13,7 @@ listings_clean<- select(listings,neighbourhood_cleansed,property_type,price, est
 #Removing rows with missing values in essential columns 
 
 listings_clean <- listings_clean |>
+  mutate(price = readr::parse_number(price))|>
   drop_na(neighbourhood_cleansed,
           property_type,
           price, 
@@ -25,7 +26,9 @@ property_analysis <- listings_clean |>
   summarise(avg_revenue= mean(estimated_revenue_l365d,na.rm=TRUE),
             median_revenue= median(estimated_revenue_l365d, na.rm=TRUE),
             avg_ocuppancy= mean(estimated_occupancy_l365d, na.rm=TRUE),
-            total_listings= n())|>
+            avg_price_per_night = mean(price, na.rm = TRUE),
+            total_listings= n(),
+            )|>
   arrange(desc(avg_revenue))
 
 print(property_analysis, n=100)
@@ -36,10 +39,11 @@ neighbourhood_analysis <- listings_clean |>
   summarise(avg_revenue= mean(estimated_revenue_l365d,na.rm=TRUE),
             median_revenue= median(estimated_revenue_l365d, na.rm=TRUE),
             avg_ocuppancy= mean(estimated_occupancy_l365d, na.rm=TRUE),
-            total_listings= n())|>
+            total_listings= n(),
+            avg_price_per_night = mean(price, na.rm = TRUE))|>
   arrange(desc(avg_revenue))
   
-print(neighbourhood_analysis, n=100)
+print(neighbourhood_analysis, n=Inf)
 
 #Analyzing average revenue by neighborhood and property type
 combined_analysis <- listings_clean |>
@@ -49,7 +53,55 @@ combined_analysis <- listings_clean |>
     median_revenue = median(estimated_revenue_l365d),
     avg_occupancy = mean(estimated_occupancy_l365d),
     total_listings = n(),
+    avg_price_per_night = mean(price, na.rm = TRUE),
     .groups = "drop") |>
   arrange(desc(avg_revenue))
 print(combined_analysis, n=Inf)
+
+
+#Filtering results to find combinations of neighborhood-property type with more listings and higher revenue
+filtered_analysis <- combined_analysis|>
+  filter(total_listings>=20)|>
+  arrange(desc(avg_revenue))|>
+print(filtered_analysis, n=Inf)
+
+#Filtering results to find combinations of neighborhood-property type with more listings and higher occupancy 
+combined_occupancy <- combined_analysis |>
+  filter(total_listings >= 20) |>
+  arrange(desc(avg_occupancy))
+print(combined_occupancy, n = Inf)
+
+library(ggplot2)
+
+#Graph showing top 10 Neighbourhood and Property Type Combinations with the highest average annual revenue
+
+graph1_data <- combined_analysis|>
+  filter(total_listings>=20)|>
+  arrange(desc(avg_revenue))|>
+  slice_head(n = 10)
+
+ggplot(graph1_data, aes(x= reorder(paste(neighbourhood_cleansed, property_type, sep="-"), avg_revenue),
+                              y=avg_revenue))+
+  geom_col(fill="darkblue")+
+  scale_y_continuous(labels = scales::label_dollar()) +
+  coord_flip()+
+  labs(title="Top 10 Neighbourhood and Property Type Combinations" ,
+         subtitle= "Average estimated annual revenue (CAD), minimum 20 listing",
+         x= "Neighbourhood and Property type",
+         y= "Average Annual Revenue (CAD)")
+
+
+
+ggplot(filtered_analysis,
+       aes(x = avg_occupancy,
+           y = avg_revenue,
+           size = total_listings)) +
+  geom_point(alpha = 0.7, color = "darkblue") +
+  labs(title = "Relationship Between Occupancy and Annual Revenue",
+       subtitle = "Each point represents a neighbourhood and property type combination",
+       x = "Average Occupancy (Days per Year)",
+       y = "Average Annual Revenue (CAD)",
+       size = "Number of Listings") 
+select(listings_clean, review_scores_rating)
+
 
