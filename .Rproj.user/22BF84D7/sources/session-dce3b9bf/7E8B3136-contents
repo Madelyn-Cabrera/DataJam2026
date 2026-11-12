@@ -102,6 +102,6 @@ ggplot(filtered_analysis,
        x = "Average Occupancy (Days per Year)",
        y = "Average Annual Revenue (CAD)",
        size = "Number of Listings") 
-select(listings_clean, review_scores_rating)
+
 
 
