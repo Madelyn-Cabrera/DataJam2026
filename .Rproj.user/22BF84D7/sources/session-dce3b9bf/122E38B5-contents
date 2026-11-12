@@ -1,0 +1,95 @@
+# Data transformation lec 02
+install.packages("nycflights13")
+
+library(gapminder)
+library(dplyr)
+library(nycflights13)
+head(flights)
+
+#contains all rows from gapminder which variable year equals 2007
+gm07<- filter(gapminder, year==2007)
+
+#flights whose departure months is 01 and departure minute time more than 1 min
+jan13<- filter(flights, month==1 & dep_delay >1)
+
+#Exercise 1(a): extract all flights from january or february
+filter(flights, month== 1 | month==2)
+#Exercise 1(b): extract all flights from january or february with departure delay of 1 or more min
+filter(flights, (month==1 |month== 2) & dep_delay >=1 )
+
+# %in% is a shortcut for combining | and == 
+# from lab 2 we saw this chunk of code:
+
+#hiv <- read.csv("../labs/lab2/HIVprev.csv")
+#cc <- c(
+#  "Botswana", "Central African Republic", "Congo", "Kenya", "Lesotho",
+#  "Malawi", "Namibia", "South Africa", "Swaziland", "Uganda", "Zambia",
+#  "Zimbabwe")
+#hihiv <- filter(hiv, Country %in% cc)  
+
+#which is the equivalent and more efficient way to this 
+# filter(hiv,Country=="Botswana" | Country=="Central African Republic", etc. 
+
+
+filter(flights,month %in% c(1,2))
+#same as (flights, month== 1 | month==2)
+# The %in% is useful when we have many comparisons 
+
+head(airlines,10)
+#Exercise 2: extract all flights operated by american, united, delta
+filter(flights, carrier %in% c("AA","DL","UA"))
+
+#Exercise 3: Extract all flights from january with missing departure delay
+filter(flights, month== 1 & is.na(dep_delay)== TRUE)
+
+library(tidyverse)
+data(mpg)
+#Exercise 4: arrange mpg data set by decreasing order in the number of cyl in increasing order by displ
+arrange(mpg, desc(cyl), displ)
+?flights
+
+#selecting a range of columns
+select(flights, month:minute)
+#start at month end at column minute. both inclusive
+#here we keep the columns in that range
+
+#selecting a range of columns to remove
+select(flights, -(month:minute))
+
+#renaming variables using select
+names(flights)
+#Here we can use = to chnage the name 
+select(flights, tail_num=tailnum)
+
+#renaming a variable without select 
+flights<-rename(flights, tail_num=tailnum)
+names(flights)
+
+#Select columns that contain the characters dep
+select(flights, contains("dep"))
+
+#Exercise Select from flights, all variables with "dep" or "arr" in their name
+select(flights, contains("dep")|contains("arr"))
+
+#adding new variables with mutute, specify the name of the new variable what is that variable going to store
+#We do flight <- to store the new variable back in flights 
+flights<- mutate(flights, gain=arr_delay-dep_delay, gainh= gain/60)
+select(flights, gain, gainh)
+#Mutate will add those new columns at the end (right) of your dataset 
+#You can specify where you want to add those varibles with .before and .after
+# it would look like mutate(flights, gain=arr, .before= arr_delay)
+
+#Using the pipe:think of it as a chain and taking the result prom the previous step and pass it to the next one 
+#it doesnt store the results from each step it just saves it to continue with the next step
+
+flights |> #start with the dataset flights
+  select(contains("delay")) |>  #from the data set select and keep all columns that contain the word "delay" in it
+  mutate(dep_delay_hour= dep_delay/60) |> #Create a new column converting departure delay in hours and puts it at the end 
+  arrange(dep_delay_hour)|> #reorders rows by ascending order of the departure delays hours
+  head(n=4) #Returns the first 4 rows 
+
+select(flights, "arr_delay")
+#equivalent to
+flights |>
+  select("arr_delay")
+

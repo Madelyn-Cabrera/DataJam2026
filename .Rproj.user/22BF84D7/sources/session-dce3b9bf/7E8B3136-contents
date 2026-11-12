@@ -1,0 +1,55 @@
+library(dplyr)
+library(tidyverse)
+
+#listings.csv is a file extracted from the listings.csv.gz compressed folder
+listings <- read_csv("listings.csv")
+
+names(listings)
+
+
+listings_clean<- select(listings,neighbourhood_cleansed,property_type,price, estimated_occupancy_l365d,estimated_revenue_l365d,review_scores_rating)
+
+
+#Removing rows with missing values in essential columns 
+
+listings_clean <- listings_clean |>
+  drop_na(neighbourhood_cleansed,
+          property_type,
+          price, 
+          estimated_occupancy_l365d,
+          estimated_revenue_l365d)
+
+#Analysying revenue and occupancy by type of property
+property_analysis <- listings_clean |>
+  group_by(property_type)|>
+  summarise(avg_revenue= mean(estimated_revenue_l365d,na.rm=TRUE),
+            median_revenue= median(estimated_revenue_l365d, na.rm=TRUE),
+            avg_ocuppancy= mean(estimated_occupancy_l365d, na.rm=TRUE),
+            total_listings= n())|>
+  arrange(desc(avg_revenue))
+
+print(property_analysis, n=100)
+ 
+#Analysing revenue and occupancy by neighbourhood   
+neighbourhood_analysis <- listings_clean |>
+  group_by(neighbourhood_cleansed)|>
+  summarise(avg_revenue= mean(estimated_revenue_l365d,na.rm=TRUE),
+            median_revenue= median(estimated_revenue_l365d, na.rm=TRUE),
+            avg_ocuppancy= mean(estimated_occupancy_l365d, na.rm=TRUE),
+            total_listings= n())|>
+  arrange(desc(avg_revenue))
+  
+print(neighbourhood_analysis, n=100)
+
+#Analyzing average revenue by neighborhood and property type
+combined_analysis <- listings_clean |>
+  group_by(neighbourhood_cleansed, property_type) |>
+  summarise(
+    avg_revenue = mean(estimated_revenue_l365d),
+    median_revenue = median(estimated_revenue_l365d),
+    avg_occupancy = mean(estimated_occupancy_l365d),
+    total_listings = n(),
+    .groups = "drop") |>
+  arrange(desc(avg_revenue))
+print(combined_analysis, n=Inf)
+
