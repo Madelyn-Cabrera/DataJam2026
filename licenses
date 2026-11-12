@@ -1,0 +1,339 @@
+"""
+DataJam 2026 - Licensed vs. unlicensed listings comparison (Mac-friendly)
+Data: Inside Airbnb, Vancouver, CC BY 4.0
+
+HOW TO RUN (Mac):
+  1. Put this file and Vancouver.csv in the same folder.
+  2. Open Terminal, type  cd  + space, drag the folder into the window, press Enter.
+  3. Run:  python3 compare_licensed.py
+     (or give a path:  python3 compare_licensed.py /path/to/Vancouver.csv)
+
+Missing packages (numpy, pandas, matplotlib) are installed automatically
+into the same Python that runs this script.
+Never prints real licence numbers - only categories and counts.
+"""
+import importlib
+import os
+import re
+import subprocess
+import sys
+
+# ---------------------------------------------------------------
+# 0. Auto-install missing packages into THIS Python
+# ---------------------------------------------------------------
+NEEDED = {"numpy": "numpy", "pandas": "pandas", "matplotlib": "matplotlib"}
+
+def ensure_packages():
+    missing = []
+    for module, pip_name in NEEDED.items():
+        try:
+            importlib.import_module(module)
+        except ImportError:
+            missing.append(pip_name)
+    if not missing:
+        return
+    print(f"Installing missing packages: {', '.join(missing)} ...")
+    base = [sys.executable, "-m", "pip", "install", "--quiet"]
+    # Try normal install, then --user, then Homebrew-Python workaround
+    for extra in ([], ["--user"], ["--user", "--break-system-packages"]):
+        if subprocess.call(base + extra + missing) == 0:
+            importlib.invalidate_caches()
+            print("Done.\n")
+            return
+    sys.exit(
+        "\nCould not install packages automatically. In Terminal, run:\n"
+        f"  {sys.executable} -m pip install {' '.join(missing)}\n"
+        "then run this script again.")
+
+ensure_packages()
+
+import numpy as np
+import pandas as pd
+
+# ---------------------------------------------------------------
+# Find the CSV: argument, or Vancouver.csv next to this script
+# ---------------------------------------------------------------
+HERE = os.path.dirname(os.path.abspath(__file__))
+os.chdir(HERE)                       # charts/ folder is created next to the script
+if len(sys.argv) > 1:
+    path = os.path.expanduser(sys.argv[1])
+else:
+    candidates = [f for f in os.listdir(HERE) if f.lower().endswith(".csv")]
+    path = "Vancouver.csv" if "Vancouver.csv" in candidates else (candidates[0] if candidates else None)
+if not path or not os.path.exists(path):
+    sys.exit("Could not find the CSV. Put Vancouver.csv in the same folder as this script, "
+             "or run:  python3 compare_licensed.py /path/to/file.csv")
+
+df = pd.read_csv(path)
+print(f"Loaded {len(df):,} listings, {df.shape[1]} columns from {os.path.basename(path)}")
+print("Scrape date(s):", sorted(df["last_scraped"].unique()))
+
+# ---------------------------------------------------------------
+# 1. Clean the columns we need
+# ---------------------------------------------------------------
+df["price_num"] = (df["price"].astype(str)
+                   .str.replace(r"[$,]", "", regex=True)
+                   .replace("nan", np.nan).astype(float))
+
+# ---------------------------------------------------------------
+# 2. Parse the licence field into two parts: city + provincial
+#    Example raw value:
+#    "Municipal registration number: 25-123456<br />Provincial registration number: H123456789"
+# ---------------------------------------------------------------
+def split_parts(raw):
+    if pd.isna(raw):
+        return None, None
+    raw = str(raw)
+    muni = re.search(r"Municipal registration number:\s*(.*?)(?:<br\s*/?>|$)", raw)
+    prov = re.search(r"Provincial registration number:\s*(.*?)(?:<br\s*/?>|$)", raw)
+    return (muni.group(1).strip() if muni else None,
+            prov.group(1).strip() if prov else None)
+
+def classify_city(v):
+    if v is None or v == "":
+        return "missing"
+    if re.search(r"exempt", v, re.I):
+        return "exempt"
+    if re.search(r"day minimum", v, re.I):
+        return "monthly (30+ days)"
+    # City of Vancouver format: YY-NNNNNN (allow stray spaces, '#', 'Licence', en dash)
+    if re.search(r"\d{2}\s*[-–]\s*\d{5,6}", v):
+        return "valid format"
+    return "unclear"
+
+def classify_prov(v):
+    if v is None or v == "":
+        return "missing"
+    if re.search(r"exempt", v, re.I):
+        return "exempt"
+    # BC registry: letter prefix (H, PM, ST...) followed by digits
+    if re.fullmatch(r"[A-Z]{1,2}\d{7,10}", v.replace(" ", "")):
+        return "valid format"
+    return "unclear"
+
+parts = df["license"].apply(split_parts)
+df["city_lic"] = [classify_city(m) for m, _ in parts]
+df["prov_lic"] = [classify_prov(p) for _, p in parts]
+
+def overall(row):
+    c, p = row["city_lic"], row["prov_lic"]
+    if pd.isna(row["license"]):
+        return "No licence info"
+    if c == "monthly (30+ days)":
+        return "Monthly rental"
+    if c == "valid format" and p == "valid format":
+        return "Fully licensed"
+    if c == "valid format" and p in ("missing", "exempt"):
+        return "City licence only"
+    if c == "exempt" or p == "exempt":
+        return "Claims exempt"
+    return "Unclear / invalid"
+
+df["licence_group"] = df.apply(overall, axis=1)
+
+print("\n=== Licence groups (all listings) ===")
+print(df["licence_group"].value_counts().to_string())
+
+# ---------------------------------------------------------------
+# 3. Keep only real short-term rentals (< 30 night minimum)
+# ---------------------------------------------------------------
+before = len(df)
+str_df = df[(df["minimum_nights"] < 30) & (df["licence_group"] != "Monthly rental")].copy()
+print(f"\nDropped {before - len(str_df):,} listings with minimum_nights >= 30 (monthly rentals)")
+print(f"Short-term rentals kept: {len(str_df):,}")
+
+# Simple 2-way split for the main comparison
+str_df["licensed"] = np.where(
+    str_df["licence_group"].isin(["Fully licensed", "City licence only"]),
+    "Licensed", "Not clearly licensed")
+
+# ---------------------------------------------------------------
+# 4. Compare performance
+#    'Active' = had at least one review in the last 12 months,
+#    so we don't compare against dead listings
+# ---------------------------------------------------------------
+str_df["active"] = str_df["number_of_reviews_ltm"] > 0
+metrics = {
+    "listings": ("id", "count"),
+    "pct_active": ("active", "mean"),
+    "median_price": ("price_num", "median"),
+    "median_occupancy_nights": ("estimated_occupancy_l365d", "median"),
+    "median_revenue": ("estimated_revenue_l365d", "median"),
+    "mean_revenue": ("estimated_revenue_l365d", "mean"),
+    "pct_entire_home": ("room_type", lambda s: (s == "Entire home/apt").mean()),
+    "median_bedrooms": ("bedrooms", "median"),
+}
+
+pd.set_option("display.float_format", lambda x: f"{x:,.2f}")
+pd.set_option("display.width", 200)
+pd.set_option("display.max_columns", 20)
+print("\n=== All short-term listings: licensed vs not ===")
+print(str_df.groupby("licensed").agg(**metrics).T)
+
+active = str_df[str_df["active"]]
+print("\n=== ACTIVE listings only (>=1 review in last 12 months) ===")
+print(active.groupby("licensed").agg(**metrics).T)
+
+print("\n=== Active listings by detailed group ===")
+print(active.groupby("licence_group").agg(**metrics).T)
+
+# Same comparison within entire homes only (removes room-type mix effect)
+eh = active[active["room_type"] == "Entire home/apt"]
+print("\n=== ACTIVE entire homes only ===")
+print(eh.groupby("licensed").agg(**metrics).T)
+
+# ---------------------------------------------------------------
+# 5. Does it change the answer? -> neighbourhood ranking with vs without
+# ---------------------------------------------------------------
+def nbhd_rank(d):
+    g = d.groupby("neighbourhood_cleansed")["estimated_revenue_l365d"].agg(["median", "count"])
+    g = g[g["count"] >= 10]                     # skip tiny samples
+    return g["median"].rank(ascending=False)
+
+r_all = nbhd_rank(eh)
+r_lic = nbhd_rank(eh[eh["licensed"] == "Licensed"])
+cmp = pd.DataFrame({"rank_all": r_all, "rank_licensed_only": r_lic}).dropna()
+cmp["rank_change"] = cmp["rank_licensed_only"] - cmp["rank_all"]
+print("\n=== Neighbourhood revenue ranking: all vs licensed-only (active entire homes) ===")
+print(cmp.sort_values("rank_licensed_only").to_string())
+print("Spearman correlation of rankings:",
+      round(cmp["rank_all"].rank().corr(cmp["rank_licensed_only"].rank()), 3))
+
+# ---------------------------------------------------------------
+# 6. Estimated compliance rate by neighbourhood (ESTIMATE - imperfect data)
+# ---------------------------------------------------------------
+comp = (active.groupby("neighbourhood_cleansed")["licensed"]
+        .apply(lambda s: (s == "Licensed").mean())
+        .sort_values())
+print("\n=== Estimated share of active listings licensed, by neighbourhood (lowest first) ===")
+print(comp.map("{:.0%}".format).to_string())
+
+# ---------------------------------------------------------------
+# 7. Bottom line: how much does excluding unlicensed listings move the number?
+# ---------------------------------------------------------------
+all_med = eh["estimated_revenue_l365d"].median()
+lic_med = eh.loc[eh["licensed"] == "Licensed", "estimated_revenue_l365d"].median()
+print("\n=== Bottom line (active entire homes) ===")
+print(f"Median revenue, all listings:   ${all_med:,.0f}")
+print(f"Median revenue, licensed only:  ${lic_med:,.0f}")
+print(f"Change: {100*(lic_med/all_med-1):+.1f}%")
+print("\nWhere did the 'no licence' listings go?")
+print(pd.crosstab(df["licence_group"], df["minimum_nights"] >= 30,
+                  colnames=["min_nights>=30"]).to_string())
+
+# ===============================================================
+# 8. CHARTS  (saved as PNGs in ./charts/ - ready for slides)
+# ===============================================================
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+os.makedirs("charts", exist_ok=True)
+LIC, NOT = "#2a78d6", "#eb6834"          # licensed = blue, not clearly licensed = orange
+INK, MUTED, GRID = "#0b0b0b", "#52514e", "#e6e5e1"
+CREDIT = "Data: Inside Airbnb, Vancouver, 15 June 2026, CC BY 4.0"
+
+plt.rcParams.update({
+    "font.size": 11, "axes.edgecolor": GRID, "axes.labelcolor": MUTED,
+    "xtick.color": MUTED, "ytick.color": MUTED, "axes.spines.top": False,
+    "axes.spines.right": False, "axes.titleweight": "bold", "axes.titlesize": 13,
+    "axes.titlecolor": INK, "figure.dpi": 150,
+})
+
+def finish(fig, name, note=None):
+    text = CREDIT if note is None else f"{note}\n{CREDIT}"
+    fig.text(0.01, 0.01, text, fontsize=8, color=MUTED, va="bottom")
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    fig.savefig(f"charts/{name}.png", bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    print(f"Saved charts/{name}.png")
+
+# --- Chart 1: where do the listings go? (cleaning funnel) -------
+grp = df["licence_group"].where(df["minimum_nights"] < 30, "Monthly rental (30+ night min)")
+order = ["Fully licensed", "City licence only", "Claims exempt",
+         "Unclear / invalid", "No licence info", "Monthly rental (30+ night min)"]
+counts = grp.value_counts().reindex(order).fillna(0)
+colors = [LIC, LIC, NOT, NOT, NOT, "#b5b4ae"]
+fig, ax = plt.subplots(figsize=(8, 4))
+bars = ax.barh(counts.index[::-1], counts.values[::-1], color=colors[::-1], height=0.6)
+ax.bar_label(bars, labels=[f"{v:,.0f}" for v in counts.values[::-1]],
+             padding=4, color=INK, fontsize=10)
+ax.set_title("Most listings with no licence are monthly rentals, not STRs")
+ax.set_xlabel("Number of listings")
+ax.xaxis.grid(True, color=GRID); ax.set_axisbelow(True)
+finish(fig, "1_licence_groups",
+       "Blue = licensed, orange = not clearly licensed, gray = dropped (min. stay 30+ nights). "
+       "Licence status is an estimate from listing text.")
+
+# --- Chart 2: licensed vs not - revenue and occupancy (two panels, no dual axis)
+summary = eh.groupby("licensed").agg(
+    revenue=("estimated_revenue_l365d", "median"),
+    nights=("estimated_occupancy_l365d", "median"),
+    n=("id", "count")).reindex(["Licensed", "Not clearly licensed"])
+fig, axes = plt.subplots(1, 2, figsize=(9, 4))
+for ax, col, title, fmt in [
+        (axes[0], "revenue", "Median yearly revenue", lambda v: f"${v:,.0f}"),
+        (axes[1], "nights", "Median nights booked / year", lambda v: f"{v:.0f}")]:
+    b = ax.bar(summary.index, summary[col], color=[LIC, NOT], width=0.55)
+    ax.bar_label(b, labels=[fmt(v) for v in summary[col]], padding=3, color=INK)
+    ax.set_title(title, fontsize=12, pad=14)
+    ax.set_ylim(0, summary[col].max() * 1.15)
+    ax.set_yticks([]); ax.spines["left"].set_visible(False)
+    ax.set_xticks(range(2), [f"{i}\n(n={summary.loc[i,'n']:,})" for i in summary.index])
+fig.suptitle("Unlicensed listings earn less - but they're only ~6% of active entire homes",
+             fontweight="bold", color=INK)
+finish(fig, "2_licensed_vs_not",
+       "Active entire homes (1+ review in last 12 months, min. stay < 30 nights). "
+       "Revenue/occupancy are Inside Airbnb estimates.")
+
+# --- Chart 3: does it change the answer? overall median ---------
+fig, ax = plt.subplots(figsize=(6, 3.2))
+vals = [all_med, lic_med]
+b = ax.barh(["All listings", "Licensed only"], vals, color=["#b5b4ae", LIC], height=0.5)
+ax.bar_label(b, labels=[f"${v:,.0f}" for v in vals], padding=4, color=INK)
+ax.set_xlim(0, max(vals) * 1.25)
+ax.set_title(f"Excluding unlicensed listings moves median revenue {100*(lic_med/all_med-1):+.1f}%")
+ax.set_xticks([]); ax.spines["bottom"].set_visible(False)
+finish(fig, "3_bottom_line", "Active entire homes, median estimated revenue (last 12 months).")
+
+# --- Chart 4: neighbourhood ranking all vs licensed-only (slope chart)
+c = cmp.sort_values("rank_all")
+fig, ax = plt.subplots(figsize=(9, 8))
+for nb, r in c.iterrows():
+    moved = abs(r["rank_change"]) >= 3
+    col = NOT if moved else "#b5b4ae"
+    ax.plot([0, 1], [r["rank_all"], r["rank_licensed_only"]], color=col,
+            lw=2 if moved else 1.2, marker="o", ms=5)
+    ax.text(-0.04, r["rank_all"], nb, ha="right", va="center", fontsize=9,
+            color=INK if moved else MUTED)
+    ax.text(1.04, r["rank_licensed_only"], f"#{int(r['rank_licensed_only'])}  {nb}",
+            ha="left", va="center", fontsize=9, color=INK if moved else MUTED)
+ax.set_ylim(len(c) + 0.5, 0.5)
+ax.set_xlim(-0.9, 1.9)
+ax.set_xticks([0, 1], ["All listings", "Licensed only"])
+ax.set_yticks([]); ax.spines["left"].set_visible(False); ax.spines["bottom"].set_visible(False)
+rho = cmp["rank_all"].rank().corr(cmp["rank_licensed_only"].rank())  # Spearman, no scipy needed
+ax.set_title(f"Neighbourhood revenue ranking barely changes (Spearman ρ = {rho:.2f})")
+finish(fig, "4_neighbourhood_ranks",
+       "Rank by median revenue, active entire homes; neighbourhoods with 10+ listings. "
+       "Orange = moved 3+ places.")
+
+# --- Chart 5: estimated licensed share by neighbourhood ----------
+comp_sorted = comp.sort_values()
+fig, ax = plt.subplots(figsize=(7, 7))
+b = ax.barh(comp_sorted.index, comp_sorted.values * 100, color=LIC, height=0.65)
+ax.bar_label(b, labels=[f"{v:.0%}" for v in comp_sorted.values], padding=3,
+             fontsize=8, color=MUTED)
+ax.set_xlim(0, 110); ax.set_xlabel("% of active short-term listings that look licensed")
+ax.set_title("Estimated licensed share is high everywhere (84-100%)")
+ax.xaxis.grid(True, color=GRID); ax.set_axisbelow(True)
+finish(fig, "5_compliance_by_neighbourhood",
+       "ESTIMATE: based on the format of the licence text on each listing, "
+       "not verified against City records.")
+
+# ---------------------------------------------------------------
+# Open the charts folder in Finder (Mac only)
+# ---------------------------------------------------------------
+print(f"\nAll charts saved in: {os.path.join(HERE, 'charts')}")
+if sys.platform == "darwin":
+    subprocess.call(["open", "charts"])
