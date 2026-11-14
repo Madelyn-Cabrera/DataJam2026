@@ -1,9 +1,9 @@
 {
     "id": "4950B704",
-    "path": null,
-    "project_path": null,
+    "path": "~/GitHub/DataJam2026/Dataset Analyis.R",
+    "project_path": "Dataset Analyis.R",
     "type": "r_source",
-    "hash": "1262331418",
+    "hash": "0",
     "contents": "",
     "dirty": true,
     "created": 1794515498107.0,
@@ -13,15 +13,15 @@
         "tempName": "Untitled1",
         "source_window_id": "",
         "Source": "Source",
-        "cursorPosition": "111,31",
-        "scrollLine": "97"
+        "cursorPosition": "143,0",
+        "scrollLine": "123"
     },
     "folds": "",
-    "lastKnownWriteTime": 219043332146,
-    "encoding": "",
+    "lastKnownWriteTime": 1794518222,
+    "encoding": "UTF-8",
     "collab_server": "",
     "source_window": "",
-    "last_content_update": 1794515500615,
+    "last_content_update": 1794528976754,
     "read_only": false,
     "read_only_alternatives": []
 }

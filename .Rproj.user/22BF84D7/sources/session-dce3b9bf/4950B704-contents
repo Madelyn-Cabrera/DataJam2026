@@ -25,20 +25,19 @@ property_analysis <- listings_clean |>
   group_by(property_type)|>
   summarise(avg_revenue= mean(estimated_revenue_l365d,na.rm=TRUE),
             median_revenue= median(estimated_revenue_l365d, na.rm=TRUE),
-            avg_ocuppancy= mean(estimated_occupancy_l365d, na.rm=TRUE),
+            avg_occupancy= mean(estimated_occupancy_l365d, na.rm=TRUE),
             avg_price_per_night = mean(price, na.rm = TRUE),
-            total_listings= n(),
-  )|>
+            total_listings= n(),)|>
   arrange(desc(avg_revenue))
 
 print(property_analysis, n=100)
 
-#Analysing revenue and occupancy by neighbourhood   
+#Analysing revenue and occupancy by neighborhood   
 neighbourhood_analysis <- listings_clean |>
   group_by(neighbourhood_cleansed)|>
   summarise(avg_revenue= mean(estimated_revenue_l365d,na.rm=TRUE),
             median_revenue= median(estimated_revenue_l365d, na.rm=TRUE),
-            avg_ocuppancy= mean(estimated_occupancy_l365d, na.rm=TRUE),
+            avg_occupancy= mean(estimated_occupancy_l365d, na.rm=TRUE),
             total_listings= n(),
             avg_price_per_night = mean(price, na.rm = TRUE))|>
   arrange(desc(avg_revenue))
@@ -62,8 +61,8 @@ print(combined_analysis, n=Inf)
 #Filtering results to find combinations of neighborhood-property type with more listings and higher revenue
 filtered_analysis <- combined_analysis|>
   filter(total_listings>=20)|>
-  arrange(desc(avg_revenue))|>
-  print(filtered_analysis, n=Inf)
+  arrange(desc(avg_revenue))
+print(filtered_analysis, n=Inf)
 
 #Filtering results to find combinations of neighborhood-property type with more listings and higher occupancy 
 combined_occupancy <- combined_analysis |>
@@ -91,22 +90,56 @@ ggplot(graph1_data, aes(x= reorder(paste(neighbourhood_cleansed, property_type, 
        y= "Average Annual Revenue (CAD)")
 
 
-graph2_data <- combined_analysis |>
-  filter(total_listings >= 20) |>
-  mutate(label = paste(neighbourhood_cleansed, property_type, sep = " - "))
 
-ggplot(graph2_data,
-       aes(x = avg_occupancy,
-           y = avg_revenue,
-           size = total_listings)) +
-  geom_point(alpha = 0.7, color = "darkblue") +
-  geom_text(aes(label = label),
-            size = 3,
-            hjust = -0.1,
-            check_overlap = TRUE) +
+#Price avg graph: Average nightly price by property type. Helps identify which types of property command higher prices
+price_graph_data <- property_analysis |>
+  filter(total_listings >= 20) |>
+  arrange(desc(avg_price_per_night))
+
+ggplot(price_graph_data,
+       aes(x = reorder(property_type, avg_price_per_night),
+           y = avg_price_per_night)) +
+  geom_col(fill = "darkgreen") +
+  coord_flip() +
+  scale_y_continuous(labels = scales::label_dollar()) +
+  labs(title = "Average Nightly Price by Property Type",
+       subtitle = "Average listed nightly price (CAD)",
+       x = "Property Type",
+       y = "Average Nightly Price (CAD)")
+
+#Market demand graph: Average occupancy by neighborhood. Helps find which neighbourhoods have stronger demand
+occupancy_graph_data <- neighbourhood_analysis |>
+  filter(total_listings >= 20) |>
+  arrange(desc(avg_occupancy))
+
+ggplot(occupancy_graph_data,
+       aes(x = reorder(neighbourhood_cleansed, avg_occupancy),
+           y = avg_occupancy)) +
+  geom_col(fill = "darkcyan") +
+  coord_flip() +
   labs(
-    title = "Relationship Between Occupancy and Annual Revenue",
-    subtitle = "Each point represents a neighbourhood and property type combination",
-    x = "Average Occupancy (Days per Year)",
-    y = "Average Annual Revenue (CAD)",
-    size = "Number of Listings"
+    title = "Average Airbnb Occupancy by Neighbourhood",
+    subtitle = "Average occupied days over the past 365 days",
+    x = "Neighbourhood",
+    y = "Average Occupancy (Days)")
+
+
+
+combined_investment_analysis <- listings_clean |>
+  group_by(neighbourhood_cleansed, property_type) |>
+  summarise(
+    avg_revenue = mean(estimated_revenue_l365d, na.rm = TRUE),
+    median_revenue = median(estimated_revenue_l365d, na.rm = TRUE),
+    avg_occupancy = mean(estimated_occupancy_l365d, na.rm = TRUE),
+    avg_price_per_night = if (all(is.na(price))) NA_real_
+    else mean(price, na.rm = TRUE),
+    total_listings = n(),
+    price_listings = sum(!is.na(price)),
+    .groups = "drop"
+  ) |>
+  filter(total_listings >= 20) |>
+  arrange(desc(avg_revenue))
+
+print(combined_investment_analysis, n = Inf,width = Inf)
+
+
